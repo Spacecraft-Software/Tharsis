@@ -1,0 +1,1414 @@
+\input texinfo   @c -*- texinfo -*-
+@c SPDX-FileCopyrightText: 2026 Mohamed Hammad <Mohamed.Hammad@SpacecraftSoftware.org>
+@c SPDX-License-Identifier: CC-BY-SA-4.0
+@c %**start of header
+@setfilename tharsis-prd.info
+@documentencoding UTF-8
+@documentlanguage en
+@settitle Tharsis — PRD
+@set VERSION 2.0
+@set UPDATED 2026-10-27
+@set MVPLINE MVP: M0–M8 — Tharsis v0.1
+@c %**end of header
+@afourpaper
+@paragraphindent 0
+
+@copying
+This is the product requirements document for Tharsis, version
+@value{VERSION}, updated @value{UPDATED}.
+
+Copyright @copyright{} 2026 Mohamed Hammad.
+
+This document is licensed under the Creative Commons
+Attribution-ShareAlike 4.0 International licence (CC-BY-SA-4.0).
+
+Maintainer: Mohamed Hammad, @email{Mohamed.Hammad@@SpacecraftSoftware.org}.
+@end copying
+
+@dircategory Games
+@direntry
+* Tharsis PRD: (tharsis-prd).    Requirements for a Rust port of the Quake engine.
+@end direntry
+
+@titlepage
+@title Tharsis — PRD
+@subtitle Memory-safe Rust Quake engine with a Rust GPU renderer
+@subtitle Version @value{VERSION}, @value{UPDATED}
+@author Mohamed Hammad
+@page
+@vskip 0pt plus 1filll
+@insertcopying
+@end titlepage
+
+@contents
+
+@ifnottex
+@node Top
+@top Tharsis — PRD
+
+@value{MVPLINE}
+
+@insertcopying
+@end ifnottex
+
+@menu
+* Overview::            Status, decisions and identifiers.
+* Product::             Needs, content, platforms, goals and principles.
+* Technology::          Rust GPU stack, shader pipeline and the M0 gate.
+* Architecture::        Porting, ownership, QuakeC and concurrency.
+* Rendering::           Capability tiers and the GPU frame.
+* Platforms::           Desktop, browser and packaging.
+* Compatibility::       Content manifest, community formats and bugs.
+* Quality::             Fidelity, performance, safety and licensing.
+* Compliance::          How Tharsis meets The Steelbore Standard.
+* M0::                  Foundation and shader feasibility.
+* M1::                  Resources and QuakeC VM.
+* M2::                  Simulation and gameplay.
+* M3::                  Client and reference renderer.
+* M4::                  Rust GPU renderer.
+* M5::                  Audio, saves and demos.
+* M6::                  Community formats and limits.
+* M7::                  Windows, macOS and browser.
+* M8::                  Validation and v0.1 release.
+* M9::                  Mission packs and re-release.
+* M10::                 GPU experiments: optional only.
+* M11::                 Network play.
+* Risks::               Risks and mitigations.
+* Open questions::      Decisions still to make.
+* Sources::             Drafts merged and research consulted.
+@end menu
+
+@node Overview
+@chapter Overview
+
+@multitable @columnfractions .25 .75
+@headitem Field @tab Value
+@item Document
+@tab Product Requirements Document, version @value{VERSION}. Replaces PRD
+version 1.0 and the four drafts archived in @file{docs/drafts/}
+@item Date
+@tab @value{UPDATED}
+@item Status
+@tab Draft, decisions approved by the maintainer on @value{UPDATED};
+requirements not yet baselined
+@item Codename
+@tab @strong{Tharsis} (approved 2026-10-27). Directory @file{tharsis/};
+repository Spacecraft-Software/Tharsis
+@item Product
+@tab Memory-safe Rust port of the @emph{Quake} engine (WinQuake / GLQuake GPL
+release) with a GPU-driven renderer whose shaders are written in Rust, playing
+@emph{Quake} and QuakeSpasm-level community content from user-supplied data on
+Linux, Windows, macOS and the web browser
+@item Class
+@tab @strong{Game} (Standard §18.5); exempt from §18 and §10
+@item Assurance category
+@tab @strong{D — Incidental} (Standard §19.1: games), declared at M0 (R-306)
+@item Posture
+@tab Personal / Hobby (Standard §5.1)
+@item Engine licence
+@tab @code{GPL-3.0-or-later}; inherited id Software code
+@code{GPL-2.0-or-later} (§4.2), checked file by file (R-304)
+@item Document licence
+@tab @code{CC-BY-SA-4.0} (Standard §4.1.1)
+@item Governing standard
+@tab The Steelbore Standard v2.14. The local Texinfo masthead read v2.13 on
+@value{UPDATED}; R-302 rechecks before baselining
+@item Maintainer
+@tab Mohamed Hammad, @email{Mohamed.Hammad@@SpacecraftSoftware.org}
+@end multitable
+
+@quotation Trademark
+@emph{Quake} is a trademark of id Software / ZeniMax Media. Tharsis is an
+independent engine that reads Quake data files. It ships no id Software assets
+and no id Software logos, and claims no endorsement.
+@end quotation
+
+@section Summary
+
+Tharsis is one Rust codebase that plays the original @emph{Quake} campaign and
+large modern community releases such as @emph{Arcane Dimensions}. It runs on
+Linux, Windows and macOS, and in a web browser through WebAssembly and WebGPU.
+The QuakeC virtual machine, the server and the physics are transliterated by
+hand from the GPL source release. A command-driven harness compares them with
+the original C engine: discrete events must match exactly, and continuous
+values must stay within tolerances frozen before the comparison runs.
+
+The renderer is the showcase. Its shaders are written in Rust with Rust GPU and
+built by @code{cargo-gpu}. The same @code{no_std} shading code runs on the GPU,
+in CPU unit tests, and in the software reference renderer. Frames are drawn
+through wgpu 30. Static world geometry stays on the GPU, a compute pass culls
+it and writes indirect draws, and light styles and dynamic lights are evaluated
+in shaders instead of by rebuilding lightmaps on the CPU. Everything advanced
+is probed at run time and has a simpler equivalent; mesh shaders, ray queries,
+path tracing and HDR are optional experiments after the MVP.
+
+The bet on Rust GPU is guarded. M0 ends with a go/no-go gate: the Rust shaders
+must compile, translate and draw a real map slice on every MVP platform before
+the rest of the plan proceeds. If the gate fails, switching to hand-written
+WGSL needs the maintainer's written approval.
+
+@section Decision record
+
+These decisions were taken by the maintainer on @value{UPDATED} after
+comparing five drafts (see @ref{Sources}).
+
+@multitable @columnfractions .2 .4 .4
+@headitem Topic @tab Decision @tab Origin
+@item Codename
+@tab Tharsis
+@tab PRD v1.0; also used by both Texinfo drafts. Slipgate, quake-rs,
+InSight, Cerberus and Wormhole were considered
+@item Shaders
+@tab Rust GPU for all shaders; generated SPIR-V and WGSL committed; M0
+go/no-go gate on every MVP platform
+@tab Rust-GPU draft 1.2 (gate), PRD v1.0 (committed artifacts)
+@item Fidelity
+@tab Exact discrete events; per-field tolerances frozen in M0; bit-exact only
+where a test qualifies it
+@tab Rust-GPU draft 1.2
+@item Server clock
+@tab Fixed 72 Hz server tick; rendering uncapped with interpolation
+@tab PRD v1.0, Rust-GPU draft 1.2, Slipgate draft
+@item MVP platforms
+@tab Linux, Windows, macOS and browser (WebGPU)
+@tab Qwen and Slipgate drafts, widened
+@item MVP content
+@tab @code{id1} campaign, LibreQuake subset, and QuakeSpasm-level community
+formats (BSP2, 2PSB, protocol 666, raised limits, fog, skybox, alpha,
+@file{.lit})
+@tab Slipgate draft, narrowed to QuakeSpasm level
+@item Browser scope
+@tab Full single-player, same as desktop
+@tab Maintainer
+@item Browser delivery
+@tab Release download only; players serve it locally; no public page
+@tab Maintainer
+@item Multiplayer
+@tab Post-MVP milestone after licence, assurance and threat review
+@tab PRD v1.0, both Texinfo drafts
+@item Advanced GPU
+@tab Mesh shaders, ray queries, path tracing and HDR are optional experiments
+after the MVP
+@tab Four of five drafts
+@item Renderer modes
+@tab Classic and Enhanced presets. The Slipgate draft's ``Abrash Mode'' is
+not used, because it names a real person
+@tab Rust-GPU drafts
+@item Document format
+@tab @file{PRD.texi} is canonical; @file{PRD.md} is generated
+@tab Maintainer
+@end multitable
+
+@section Identifiers
+
+Items in this version use @code{R-301} to @code{R-400}. PRD v1.0 used
+@code{R-001} to @code{R-118}, and the two archived Texinfo drafts used
+@code{R-201} onwards. Those identifiers stay reserved and are never reused.
+No earlier item is ticked, so no crosswalk carries progress forward.
+
+@node Product
+@chapter Product
+
+@section Needs
+
+@table @strong
+@item Players
+want to play @emph{Quake} and current community releases on modern hardware at
+high frame rates, with the original look available, their own data found or
+picked easily, and saves that never get corrupted.
+@item Mod players
+want large community maps to load within published limits, and a clear
+message, not a crash, when content goes beyond them.
+@item Speedrunners and demo users
+want movement and timing that match the original, and demos that record and
+play back.
+@item The maintainer
+wants a real workload that exercises current Rust GPU technology across
+desktop and web, with every fidelity and performance claim backed by a test
+anyone can rerun.
+@item Packagers
+want to build from a clean checkout on stable Rust, with no nightly compiler
+and no asset download.
+@end table
+
+@section Target content
+
+@multitable @columnfractions .35 .2 .15 .3
+@headitem Content @tab Source @tab MVP @tab Public CI
+@item Shareware @code{id1/pak0.pak}
+@tab User-supplied
+@tab Yes
+@tab Only if R-311 confirms the redistribution terms
+@item Registered @code{id1} (@code{pak0}, @code{pak1})
+@tab User-supplied
+@tab Yes
+@tab No; local acceptance only
+@item LibreQuake subset
+@tab Free data set
+@tab Yes
+@tab Yes, pinned release and SHA-256, licence audited (R-311)
+@item Project-owned fixtures
+@tab Written in tree
+@tab Yes
+@tab Yes
+@item @emph{Arcane Dimensions}, @emph{Copper}, @emph{Alkaline}
+@tab User-supplied
+@tab Yes (M6)
+@tab No; local acceptance only
+@item @emph{Scourge of Armagon}, @emph{Dissolution of Eternity}
+@tab User-supplied
+@tab No (M9)
+@tab No
+@item 2021 re-release data
+@tab User-supplied
+@tab No (M9, optional)
+@tab No
+@end multitable
+
+@section Platforms
+
+@multitable @columnfractions .2 .3 .5
+@headitem Platform @tab GPU backend @tab Notes
+@item Linux x86-64
+@tab Vulkan
+@tab Wayland and X11; the home platform; Guix, Nix and Arch packages
+@item Windows x86-64
+@tab DX12; Vulkan secondary
+@tab Release archive
+@item macOS (Apple silicon)
+@tab Metal
+@tab Release archive
+@item Web browser
+@tab WebGPU
+@tab @code{wasm32-unknown-unknown}; released as a downloadable bundle that
+players serve from @code{localhost}
+@end multitable
+
+Every platform also has Tier 0, the software renderer, for when no usable
+GPU adapter exists. OpenGL is not an MVP backend: the compute-driven renderer
+cannot assume every GL adapter has the capabilities it needs. Mobile, consoles,
+VR and 32-bit targets are out of scope.
+
+@section Goals
+
+@multitable @columnfractions .1 .9
+@headitem ID @tab Goal
+@item G1
+@tab Complete every map of the MVP content on every MVP platform, from new game
+to finale
+@item G2
+@tab Match the C oracle on the fidelity contract: exact discrete events, and
+continuous values within frozen tolerances
+@item G3
+@tab Safe Rust: @code{unsafe} forbidden in the data, filesystem, QuakeC,
+server, protocol and shading crates
+@item G4
+@tab Untrusted PAK, map, model, progs, demo, save and config input never
+crashes, hangs or escapes its sandbox
+@item G5
+@tab All shaders written in Rust with Rust GPU, tested on the CPU and shared
+with the software renderer
+@item G6
+@tab GPU-driven rendering on capable adapters, with a tested baseline path on
+all others
+@item G7
+@tab Meet the approved frame-time, load, memory and soak targets on recorded
+reference machines
+@item G8
+@tab Build and package on pinned stable Rust, without a nightly compiler and
+without downloading assets
+@end multitable
+
+@section Non-goals
+
+@multitable @columnfractions .1 .45 .45
+@headitem ID @tab Non-goal @tab Reason
+@item NG-1
+@tab QuakeWorld, @emph{Quake II}, @emph{Quake III}, Hexen II, the 2021 Kex
+engine
+@tab Different engines; each needs its own PRD
+@item NG-2
+@tab QuakeSpasm-Spiked and FTE extended QuakeC opcodes and builtins, CSQC,
+DarkPlaces features
+@tab Large, loosely specified surface; QuakeSpasm level is the ceiling
+@item NG-3
+@tab Distributing registered, shareware, mission-pack or re-release data
+@tab Legal; the GPL covers the code, not the data
+@item NG-4
+@tab A hosted web page or server for the browser build
+@tab Maintainer decision; the browser build is a release download
+@item NG-5
+@tab Telemetry, accounts, advertising, automatic downloads
+@tab §9
+@item NG-6
+@tab Linking C or C++ that the project writes into the shipped program
+@tab Product identity; the C oracle is test-only. Platform libraries and
+drivers are native code and are not claimed otherwise
+@item NG-7
+@tab A nightly compiler for ordinary builds or packages
+@tab §24 pinned toolchain; see @ref{Technology}
+@item NG-8
+@tab Mandatory ray tracing, mesh shaders or vendor-specific APIs (CUDA)
+@tab Cross-vendor baseline; experiments stay optional
+@item NG-9
+@tab A remake: new weapons, rebalancing, replacement campaign, mandatory
+high-resolution assets
+@tab The product is a port
+@end multitable
+
+@section Product principles
+
+@enumerate
+@item
+@strong{Classic gameplay first, modern rendering second.} No enhancement may
+change weapon timing, physics, monster decisions, trigger order, network
+messages or demo playback.
+@item
+@strong{The server is the source of truth.} Even single player runs a server
+and a client joined by the protocol-15 loopback. Renderers, audio and UI read
+snapshots and never write back.
+@item
+@strong{Evidence over assertion.} Every fidelity, safety and speed claim names
+the test that proves it, with its inputs and environment recorded.
+@item
+@strong{One shading source.} Lighting, palette, warp, fog and tone functions
+are written once in Rust and run on the CPU and the GPU.
+@item
+@strong{Probe, never assume.} Every GPU feature beyond the baseline is
+detected at run time, and losing the GPU falls back to software rendering.
+@item
+@strong{Untrusted by default.} Every byte of content and every QuakeC
+instruction is checked before it is trusted.
+@end enumerate
+
+@node Technology
+@chapter Technology
+
+Versions were checked on @value{UPDATED}. M0 freezes exact versions after the
+shader spike, and every upgrade replays the shader, fidelity and benchmark
+corpora.
+
+@multitable @columnfractions .2 .2 .6
+@headitem Technology @tab Baseline @tab Role
+@item wgpu
+@tab 30.0.1
+@tab The only GPU API: Vulkan, DX12, Metal and browser WebGPU
+@item naga
+@tab wgpu 30 family
+@tab Validates SPIR-V and translates it to WGSL, MSL and HLSL
+@item Rust GPU (@code{spirv-std})
+@tab 0.11.0
+@tab Compiles Rust shader crates to SPIR-V
+@item @code{cargo-gpu}
+@tab Pinned with Rust GPU
+@tab Builds shaders with Rust GPU's pinned nightly, isolated from the stable
+host build
+@item winit
+@tab Pinned at M0
+@tab Windows, input and event loop on every platform
+@item cpal, symphonia
+@tab Pinned at M0, §24 audit
+@tab Audio output (including WebAudio) and pure-Rust music decoding
+@item softbuffer
+@tab Pinned at M0
+@tab Tier 0 presentation without a GPU, including a browser canvas
+@item wasm-bindgen
+@tab Pinned at M0
+@tab Browser shell, Web Worker and storage bindings
+@end multitable
+
+@section Shader pipeline
+
+@itemize
+@item
+Shading functions live in @code{tharsis-shade}, a @code{no_std} crate:
+colormap lighting, light-style blending, dynamic-light falloff, turbulent
+warp, sky scroll, fog, gamma and tone mapping. Shader entry points in
+@code{tharsis-shaders} call them on the GPU; the software renderer and the
+unit tests call them on the CPU. Shared types have explicit size and alignment
+tests.
+@item
+@code{cargo-gpu} compiles the entry points to SPIR-V. naga validates the
+SPIR-V and translates it to WGSL for the browser. Metal and DX12 receive naga
+translations inside wgpu at pipeline creation.
+@item
+The generated SPIR-V and WGSL are @strong{committed} under
+@file{shaders-out/} with a hash manifest and REUSE coverage. Ordinary builds and
+all packages use them on stable Rust and never download or install a nightly
+compiler.
+@item
+A CI job provisions the pinned shader toolchain through a checksum-verified
+step, regenerates every artifact offline, and fails if a byte or hash
+differs. Toolchain upgrades are separate, reviewed commits.
+@end itemize
+
+@section The M0 shader gate
+
+M0 ends with a go/no-go test (R-308, R-309). Before running it, the maintainer
+names the reference adapters, operating systems, drivers and browser versions,
+and freezes the fixture, sample vectors, tolerances, image thresholds and
+expected output. The gate passes only if, on every named target:
+
+@itemize
+@item
+the Rust vertex, fragment and compute shaders compile, translate and pass naga
+and wgpu validation;
+@item
+a textured, lightmapped BSP fixture draws through an indirect draw; and
+@item
+the frozen CPU/GPU sample comparisons and image comparisons pass.
+@end itemize
+
+The targets are a Linux integrated adapter, a Linux discrete adapter, one
+Windows machine, one macOS machine, and one browser. A failed gate blocks M0. A
+failure does not pass the gate just because it is documented. The maintainer
+may approve, in writing, a narrower platform commitment, a hand-written WGSL
+substitution, or a delay; the gate then reruns against the revised scope.
+
+@section Evaluated and rejected
+
+@table @strong
+@item Bevy
+Not used as the engine. Quake's entity layout, QuakeC order and timing are
+compatibility contracts that small purpose-built crates keep visible. This is
+an architecture judgment, not a claim that Bevy cannot run Quake.
+@item ash (direct Vulkan)
+Not the baseline. It would add backend-specific work and break the browser
+target. A direct-backend spike needs a measured missing capability.
+@item CubeCL
+A second GPU runtime is not needed to render Quake. Evaluated after the MVP
+for load-time compute only (R-395).
+@item Rust CUDA
+Single-vendor; never needed to build, play or test.
+@item WGSL as the main language
+Proposed by the Qwen and Slipgate drafts. Rejected as the default because the
+product is a Rust GPU showcase; kept as the gate's approved fallback.
+@end table
+
+@node Architecture
+@chapter Architecture
+
+@section Porting strategy
+
+The server, the QuakeC VM and the shared physics (@code{sv_*}, @code{pr_*},
+@code{world.c}, @code{mathlib.c}, @code{host*.c}, the model loaders) are
+@strong{transliterated by hand}. Function boundaries and evaluation order are
+kept, so a diff against the GPL source stays readable. Globals and pointers
+become owned state, checked indices and explicit lifetimes. The software
+renderer (@code{r_*}, @code{d_*}) keeps its algorithms with idiomatic data
+structures. The client front end (@code{cl_*}, @code{sbar}, @code{menu},
+@code{console}, @code{keys}, @code{cmd}, @code{cvar}) is ported with
+idiomatic types. Platform code is new.
+
+@code{c2rust} and a C shim were rejected: both leave C-shaped @code{unsafe}
+code or C in the tree, which G3 and NG-6 forbid. No ECS rewrite happens
+during the compatibility work.
+
+@section Crates
+
+@multitable @columnfractions .25 .75
+@headitem Crate @tab Responsibility
+@item @code{tharsis-math}
+@tab C-faithful scalar, vector and angle helpers; explicit float promotion
+@item @code{tharsis-fs}
+@tab PAK access, search paths, @code{-game} layering, read-only mounts, confined
+writes; native and browser storage backends
+@item @code{tharsis-data}
+@tab Bounded parsers: BSP29, BSP2, 2PSB, MDL, SPR, WAD2, LMP, WAV, palette,
+colormap, @file{.lit}
+@item @code{tharsis-qc}
+@tab QuakeC loader, VM, builtins, instruction budget, run-error boundary
+@item @code{tharsis-sv}
+@tab Server: edicts, hull traces, area links, physics, movement, saves
+@item @code{tharsis-proto}
+@tab Protocols 15 and 666, demo codec, loopback transport
+@item @code{tharsis-cl}
+@tab Client state, interpolation, temporary entities, particles, render
+snapshots
+@item @code{tharsis-console}
+@tab Command buffer, cvars, aliases, @file{.cfg} scripts, bindings
+@item @code{tharsis-ui}
+@tab Status bar, HUD, menus, console view, intermission, finales
+@item @code{tharsis-shade}
+@tab @code{no_std} shading functions shared by CPU and GPU
+@item @code{tharsis-shaders}
+@tab Rust GPU entry points, built by @code{cargo-gpu}; no game rules
+@item @code{tharsis-soft}
+@tab Software reference renderer and headless capture
+@item @code{tharsis-gpu}
+@tab wgpu resources, passes, capability probing, tiers, recovery
+@item @code{tharsis-audio}
+@tab Mixer, spatialisation, music decoding
+@item @code{tharsis-app}
+@tab Native host loop, winit, command line, platform paths
+@item @code{tharsis-web}
+@tab Browser shell: Web Worker server, storage, file picking
+@item @code{tharsis-tools}
+@tab Headless inspection, trace and demo diff, golden capture, benchmarks
+@end multitable
+
+Rules, enforced by @code{cargo deny} bans and review:
+
+@itemize
+@item
+@code{tharsis-sv} and @code{tharsis-qc} depend only on @code{tharsis-math},
+@code{tharsis-data} and @code{tharsis-proto}; they never see a renderer.
+@item
+No renderer depends on @code{tharsis-fs}; renderers receive decoded resources.
+@item
+Only @code{tharsis-gpu} depends on wgpu. Only @code{tharsis-app} and
+@code{tharsis-web} depend on windowing, audio-device or browser crates.
+@item
+Public interfaces do not expose third-party lock or channel types.
+@end itemize
+
+@section State ownership
+
+@itemize
+@item
+@code{Server} owns the loaded level (BSP, hulls, PVS), the edict arena, the
+QuakeC @code{Vm} and the area-node tree. A server frame is a function from
+the server state, a fixed time step and ordered client commands to outgoing
+messages.
+@item
+@strong{Edicts} keep vanilla's flat, index-addressed layout, because QuakeC
+addresses fields by offset. Every VM field access is bounds-checked against
+the entity size the progs declare. Free-list reuse follows vanilla's rules.
+@item
+Area-node link lists keep vanilla link order, because touch order decides
+which trigger fires first.
+@item
+@code{Client} owns only what the server sent plus interpolation history. A
+read-only render snapshot is built from it for each presented frame.
+@end itemize
+
+@section QuakeC virtual machine
+
+@itemize
+@item
+Loads @file{progs.dat} version 6 and checks the header CRC against the
+engine's field definitions.
+@item
+Every instruction checks its global, field, string, function and edict
+operands. A bad access ends the call with a run error; partially executed
+world changes are never treated as a successful call.
+@item
+A per-call instruction budget, 100 000 by default and configurable, stops
+runaway loops.
+@item
+File builtins are confined to the active game directory. @code{localcmd} and
+@code{stuffcmd} pass through the same command allowlist as user scripts; no
+content string reaches a shell or a process.
+@item
+QuakeSpasm-level extensions needed by the M6 corpus are added only when the
+manifest names them (R-311). QSS and FTE extensions are out of scope (NG-2).
+@end itemize
+
+@section Server clock
+
+The server ticks at a fixed 72 Hz. Rendering runs uncapped and interpolates
+between the two latest server frames. Catch-up work per presented frame is
+capped; local play pauses on suspend and the interpolation clock resets on
+resume. Slow rendering never changes the simulation step. This is a product
+setting, not a claim that every original mode ran at 72 Hz; the fidelity
+harness feeds both engines the same explicit time steps (@ref{Quality}).
+
+@section Concurrency model (Standard §3.2)
+
+@multitable @columnfractions .22 .3 .48
+@headitem Work @tab Model @tab Decision and trade-off
+@item Server frame (QuakeC, physics)
+@tab @strong{Serial}, one dedicated server thread
+@tab QuakeC order, link order and float evaluation order are game behaviour.
+A frame costs about 1 ms or less, so Amdahl's law leaves little to gain and
+splitting it would risk fidelity. Serial is chosen and documented here
+@item Server and client
+@tab Joined by the loopback: bounded SPSC queues natively, @code{postMessage}
+between a Web Worker and the page in the browser
+@tab The loopback is already the protocol boundary, so a separate thread
+costs no fidelity and lets simulation overlap rendering. Reliable messages
+are never dropped; a full queue applies back-pressure at a safe point
+@item Client and render
+@tab Main thread drives the event loop; render snapshots are double-buffered
+@tab winit and the browser require the main thread
+@item Command encoding
+@tab World, model and effect passes on parallel encoders (Rayon), native only
+@tab Adopted only if a benchmark beats one encoder without raising frame-time
+variance (R-355)
+@item GPU culling
+@tab Compute pass over all surfaces and entities
+@tab Parallel by nature; removes a per-frame CPU loop on Tier 2
+@item Level load
+@tab Bounded worker pool over lumps, textures, mips, lightmap atlas packing
+@tab Kept only if it beats serial on the reference machine. In the browser it
+runs serially, because the bundle must not need @code{SharedArrayBuffer}
+@item Audio mixing
+@tab Audio callback thread fed by a bounded lock-free queue
+@tab The client never blocks on audio. On overflow, disposable one-shot
+effects are dropped and counted; stop, volume and channel updates are never
+dropped. No I/O, locks or allocation in the callback
+@item CI corpus
+@tab One process per demo, trace or scene
+@tab Shared-nothing parallelism
+@end multitable
+
+@node Rendering
+@chapter Rendering
+
+@section Capability tiers
+
+@multitable @columnfractions .2 .5 .3
+@headitem Tier @tab Content @tab Availability
+@item Tier 0 — software
+@tab Ported WinQuake renderer, presented through softbuffer. Oracle captures
+and the no-GPU fallback. Preserves playability, not the GPU performance targets
+@tab All platforms
+@item Tier 1 — portable GPU
+@tab Indexed rasterisation, CPU BSP/PVS and frustum visibility, ordinary
+texture bindings, GPU light styles and dynamic lights, GPU model
+interpolation, shader sky and liquids. The correctness baseline for every
+optimised path
+@tab All platforms, including WebGPU
+@item Tier 2 — GPU-driven
+@tab Compute PVS and frustum culling writing bounded indirect draws; multi-draw
+and draw-count where present; binding arrays where present; GPU timestamps;
+pipeline caching
+@tab Native platforms with full features; on WebGPU with single indirect draws
+per batch and no binding arrays
+@item Tier 3 — experimental
+@tab Mesh shaders, ray queries, path tracing, HDR display output
+@tab Optional, after the MVP (M10)
+@end multitable
+
+Device creation requests only the features the selected tier uses. Startup
+logs the adapter, backend, limits, selected tier and every optional feature it
+rejected. A failure in an optional tier falls back one tier; a failure in the
+portable path is reported, not hidden.
+
+@strong{Tier 2 adoption gate.} Tier 2 is fully implemented and can always be
+forced. It is selected automatically for an adapter class only if it passes
+the correctness corpus, improves median frame time by at least 5 percent beyond
+run-to-run variance, does not worsen the 99th percentile by more than
+2 percent, and stays within resource targets. Otherwise Tier 1 stays the
+default and the result is recorded. Small vanilla maps may favour CPU culling.
+
+@section The GPU frame
+
+@itemize
+@item
+@strong{Static world on the GPU.} Every world surface is triangulated at load
+into large vertex and index buffers and one lightmap atlas, uploaded once per
+map. Moving brush models are dynamic instances.
+@item
+@strong{Compute visibility.} The client walks the BSP to the camera leaf and
+uploads the PVS as a bitmask. A compute pass tests surface bounds against the
+PVS and frustum and writes draw commands. Missing or invalid visibility data
+falls back to a conservative visible set; moving doors and teleports never
+cause false occlusion.
+@item
+@strong{Bounded indirect buffers.} Before dispatch, an upper bound on candidate
+commands is compared with buffer capacity; if it does not fit, the frame draws
+through Tier 1. An overflow on the GPU suppresses the partial result and draws
+a complete conservative frame before presentation. A partly culled frame is
+never presented as a success.
+@item
+@strong{Light styles on the GPU.} Each surface keeps up to four style
+lightmaps; the 64 style values are a small per-frame array blended in the
+fragment shader. The CPU never rebuilds a lightmap when a light flickers.
+@item
+@strong{Dynamic lights on the GPU.} Muzzle flashes, rockets and explosions are
+a storage buffer of lights evaluated with the classic falloff equation and
+checked against reference samples.
+@item
+@strong{Textures.} Binding arrays where supported; batching by material
+otherwise. Atlases are an optimisation that needs mip gutters, not a mandatory
+fallback.
+@item
+@strong{Alias models.} Vertex frames live in storage buffers; frame
+interpolation and instancing happen in the vertex shader.
+@item
+@strong{Frame resources.} Per-frame data uses a bounded ring with explicit
+fence lifetimes. No per-frame path allocates without bound, waits on a worker,
+or reads back the indirect buffer.
+@end itemize
+
+@section Presets
+
+@table @strong
+@item Classic
+Nearest filtering, original palette and colormap rules, documented fullbright
+handling, software-style sky and water warp, sprites, particles, view blends,
+and an optional low internal resolution. Compared with the software reference
+renderer in CI.
+@item Enhanced
+Linear filtering, mipmaps, anisotropy where available, MSAA, interpolated
+models and full-precision lighting. Enhanced presentation never shows entities
+that the original visibility rules would hide.
+@end table
+
+Neither preset changes simulation traces. Benchmark records include every
+preset setting.
+
+@section Device loss
+
+On device loss the CPU state is kept and local play pauses. The renderer makes
+one bounded rebuild and re-uploads from retained CPU data. If that fails, the
+player is offered Tier 0 or save-and-exit. Recovery from a driver hang is best
+effort; no claim is made that every GPU fault is recoverable.
+
+@node Platforms
+@chapter Platforms
+
+@section Desktop
+
+@itemize
+@item
+Per-user data follows each platform's convention: XDG directories on Linux,
+Known Folders on Windows, Application Support on macOS. Saves, configs,
+demos, screenshots, traces and logs go there. Game data directories are
+mounted read-only and never written.
+@item
+Game data is found through @code{-basedir}, @code{QUAKE_BASEDIR}, the
+platform data directories, then the current directory. If nothing is found,
+the no-data screen explains where to put legally obtained files and offers a
+directory picker. Tharsis never downloads game data.
+@item
+Linux ships through Guix, Nix and Arch packages (§5.5). Windows and macOS
+ship as release archives with checksums.
+@end itemize
+
+@section Browser
+
+@itemize
+@item
+The engine compiles to @code{wasm32-unknown-unknown}. The page runs the client
+and renderer on the main thread; the server runs in a Web Worker and speaks
+protocol 15 over @code{postMessage}.
+@item
+The bundle needs no @code{SharedArrayBuffer} and therefore no cross-origin
+isolation headers. Work that is parallel on desktop runs serially in the
+browser; this trade-off is documented here per §3.2.
+@item
+The player picks PAK files or a game folder. Copies are kept only in the
+browser's own storage (Origin Private File System or IndexedDB) on the
+player's machine. Saves, configs and demos live there too, with export and
+import. Nothing is sent over the network.
+@item
+The bundle is a release download (NG-4). Players serve it from
+@code{localhost}, which browsers treat as a secure context, so WebGPU is
+available. The release notes give a one-line way to serve it.
+@item
+All fonts, scripts and shaders ship inside the bundle; nothing is fetched
+from a third-party host (§9.1).
+@item
+If WebGPU is unavailable, the page falls back to Tier 0 on a canvas, or
+explains which browsers and settings are supported.
+@end itemize
+
+@section Input and interface
+
+@itemize
+@item
+Keyboard and mouse input through winit (pointer lock in the browser);
+bindings set with vanilla @code{bind} commands and remappable. Gamepads are
+optional.
+@item
+Configuration stays in vanilla @file{.cfg} form. Unknown commands and cvars
+produce bounded warnings.
+@item
+Menus are keyboard-complete. Defaults do not capture @code{Insert},
+@code{CapsLock} or assistive-technology chords.
+@item
+Adopted from §18.5.2 although games are exempt: remappable controls, HUD and
+text scaling, independent sound and music volumes, and a reduced-flash and
+reduced-motion option (view bob, damage tilt, screen flashes).
+@item
+The no-data screen and debug overlay use the @code{steelbore} theme and
+bundled OFL fonts (§11, §12). In-game text uses the game's own font data.
+@end itemize
+
+@node Compatibility
+@chapter Compatibility
+
+@section Compatibility manifest
+
+M0 creates a versioned manifest (R-311). It lists:
+
+@itemize
+@item
+the accepted shareware and registered data editions, with release, origin and
+SHA-256 of every PAK;
+@item
+the qualified LibreQuake release and subset, with its licence audit;
+@item
+the community corpus — @emph{Arcane Dimensions}, @emph{Copper} and
+@emph{Alkaline} — with versions, hashes, and the formats, protocols,
+extensions and limits each needs;
+@item
+the limits table: entities, edicts, models, sounds, lightmaps, visible
+surfaces, message sizes, file sizes, VM memory, recursion depth, each a bounded
+number with a diagnostic when exceeded; and
+@item
+for each claimed entry, the test, platform, input hash, result, known
+deviations, and whether it may be used in public CI.
+@end itemize
+
+A release claims compatibility only for entries in the manifest with a passing
+regression test. Licensed data and results that contain protected material stay
+in the maintainer's local acceptance environment.
+
+@section Community formats
+
+The MVP supports what QuakeSpasm-level ports support and the M6 corpus needs:
+BSP2 and 2PSB maps, protocol 666 for the loopback and demos, raised limits,
+fog, skyboxes, entity alpha and @file{.lit} coloured lighting. Protocol 999 is
+added only if the manifest shows the corpus needs it. Mission packs and the
+2021 re-release follow in M9.
+
+@section Bug compatibility
+
+A documented vanilla behaviour is preserved when gameplay, speedruns, demos
+or mods depend on it, even when it is a bug. A behaviour that only permits
+memory corruption, reading freed memory, arbitrary file access or unbounded
+computation is replaced by a checked error and recorded as an intentional
+safety difference.
+
+@node Quality
+@chapter Quality
+
+@section Fidelity contract
+
+The oracle is the id Software GPL WinQuake source built out of tree at a
+pinned commit, headless, with SSE2 and floating-point contraction disabled.
+Its build flags, CPU and harness changes are recorded.
+
+@itemize
+@item
+A command-driven harness feeds both engines the same ordered commands, random
+seed and explicit time-step sequence. M0 freezes a constant 1/72-second
+sequence and representative variable-step sequences.
+@item
+@strong{Exact:} entity spawn and removal order, discrete state, trigger
+activation order, map transitions, QuakeC opcode results and protocol bytes.
+@item
+@strong{Within frozen tolerances:} positions, velocities, angles and event
+times, with limits set per field in M0 and recorded with the float encoding,
+reference build, seed and inputs.
+@item
+@strong{Bit-exact} only where a test in a qualified environment shows it. It
+is not inferred from transliteration or from banning fused multiply-add,
+though both practices are kept because they make it likely.
+@item
+Demo checks cover message decoding, rendered client state and
+record-and-replay. Demos alone never discharge server requirements.
+@item
+A difference from the oracle in the default fixed-step mode needs a
+maintainer-approved exception and a regression fixture before release. A
+known difference never counts as a passing parity test.
+@end itemize
+
+@section Visual checks
+
+@itemize
+@item
+Software reference frames: exact palette-index checks against oracle captures
+for frozen scenes covering opaque geometry, light styles, dynamic lights,
+water and sky, models and sprites, particles and the HUD. Resolution,
+viewport, gamma, filtering and interpolation are fixed per capture.
+@item
+Classic GPU frames against software references: starting thresholds of SSIM
+at least 0.99 and at most 0.5 percent of pixels off by more than 8/255 per
+channel. After the first working renderer, per-scene thresholds and masks
+are measured and frozen by the maintainer. HUD text and visibility keep exact
+region checks.
+@item
+Enhanced mode and intentional rasterisation differences use separately
+approved GPU golden images, each recording its adapter, driver and rationale.
+@item
+Images derived from licensed content stay in the local environment.
+@end itemize
+
+@section Performance targets
+
+These are proposed engineering targets, not measurements. M0 names the
+machines and freezes CPU, GPU, RAM, OS, driver, browser, power mode and display
+settings (R-313). Runs are at least five 120-second runs after a 30-second
+warm-up, reporting median, 95th, 99th percentile and worst frame interval,
+CPU time, GPU timestamps where available, and allocations. Timestamps that are
+unavailable are reported as unavailable, never as zero.
+
+@multitable @columnfractions .3 .4 .3
+@headitem Measure @tab Workload @tab Target
+@item Frame interval, integrated GPU
+@tab 1920×1080, Tier 1 Classic, original maps
+@tab Median ≤ 8.33 ms; p99 ≤ 16.67 ms
+@item Frame interval, discrete GPU
+@tab 2560×1440, Tier 2 Enhanced, original maps
+@tab Median ≤ 4.17 ms; p99 ≤ 8.33 ms
+@item Frame interval, discrete GPU
+@tab 2560×1440, Tier 2 Enhanced, largest corpus map
+@tab Median ≤ 8.33 ms; p99 ≤ 16.67 ms
+@item Frame interval, browser
+@tab 1920×1080, Tier 1 Classic, original maps, integrated GPU
+@tab Median ≤ 16.67 ms
+@item Windows and macOS
+@tab Same workloads on their reference machines
+@tab Targets of the matching GPU class
+@item Server step
+@tab Busiest approved fixture
+@tab p99 ≤ 1 ms original; ≤ 2 ms corpus
+@item CPU submission
+@tab Tier 2, discrete profile
+@tab p95 ≤ 1 ms
+@item Map load
+@tab Largest map, local SSD, warm cache
+@tab ≤ 1 s original; ≤ 3 s corpus; cold load reported
+@item Memory
+@tab Steady play
+@tab RSS ≤ 512 MiB original, ≤ 1.5 GiB corpus; GPU ≤ 512 MiB original
+@item Browser bundle
+@tab WASM, script and shaders, compressed
+@tab ≤ 15 MiB
+@item Soak
+@tab Four hours of demos and map transitions
+@tab No crash; RSS growth after warm-up ≤ 5%
+@end multitable
+
+A target changes only with a dated justification, old and new values,
+measurements and maintainer approval; release evidence reports both.
+
+@section Untrusted input and failure handling
+
+@itemize
+@item
+Files, decoded counts, recursion, VM instructions, config expansion and
+allocations are bounded. Lengths, offsets and indices are checked before use.
+Malformed input never reaches @code{unwrap}, @code{expect} or panicking
+indexing.
+@item
+Content mounts are read-only. Absolute paths, traversal and symlink escapes
+are rejected. Native plugins and replacement shaders are out of scope.
+@item
+Every loader, the VM, demos, saves and config commands have fuzz targets with
+a minimised permanent regression corpus. A release has no open, reproducible
+crash in that corpus.
+@item
+Writes use a temporary file and atomic replace; a failed write keeps the last
+valid save. No audio means silence with one warning; no GPU means Tier 0; no
+data means the no-data screen.
+@end itemize
+
+@section Privacy
+
+No analytics, crash upload, accounts, tracking or advertising. Logs and traces
+stay local. Data discovery checks documented locations only. Test-data
+fetching is opt-in, pinned, and never part of a player build.
+
+@section Licensing and identity
+
+The upstream source carries GPL-2.0-or-later grants; new engine code is
+GPL-3.0-or-later and upstream notices are kept verbatim with per-file
+provenance. Generated shader artifacts, fixtures and third-party content each
+carry REUSE provenance. Game data is separate: the GPL release keeps its data
+restrictions, so nothing is bundled, mirrored or cached publicly without
+confirmed permission. id Software and substantial third-party work are
+credited in @file{CREDITS.md}.
+
+@node Compliance
+@chapter Standard compliance map
+
+@multitable @columnfractions .12 .15 .73
+@headitem § @tab Applies @tab How Tharsis meets it
+@item §2
+@tab Yes
+@tab Tharsis, Mars's volcanic plateau whose stress drives marsquakes
+(astronomy); registered by R-306
+@item §3.1
+@tab Yes
+@tab Rust; @code{#![forbid(unsafe_code)]} in data, fs, qc, sv, proto and shade
+crates; typed errors; bounded VM
+@item §3.2
+@tab Yes
+@tab Concurrency table; serial server and serial browser work documented;
+release flags noted in @file{Cargo.toml}; Tier 2 benchmark gate
+@item §3.3
+@tab Partly
+@tab No network in the MVP; QuakeC sandboxed; PQC N/A until M11
+@item §4
+@tab Yes
+@tab GPL-3.0-or-later; inherited notices kept; REUSE; @file{LICENSES/}
+@item §5.2, §5.7
+@tab Yes
+@tab Posture files, @file{AGENTS.md} and @file{CLAUDE.md} (R-302)
+@item §5.5
+@tab Yes
+@tab Guix, Nix and Arch packages on stable Rust from committed shaders (R-382)
+@item §6.3, §6.4
+@tab Yes
+@tab Signed commits; no upstream contributions without per-contribution
+approval
+@item §6.5
+@tab Yes
+@tab @file{.gitattributes}, @file{.editorconfig}; CR bytes rejected (R-303)
+@item §8
+@tab Yes
+@tab @file{doc/tharsis.texi} (R-381); this PRD is Texinfo
+@item §9, §9.1
+@tab Yes
+@tab No network, no telemetry, local storage; browser bundle self-contained
+@item §10, §18
+@tab No
+@tab Game carve-out §18.5; §18.5.2 practices adopted (@ref{Platforms})
+@item §11, §12
+@tab Chrome only
+@tab No-data screen and overlay use @code{steelbore} and OFL fonts; the game
+world uses the game palette
+@item §13
+@tab Tailored
+@tab Menus are the game's own; recorded in the README register
+@item §14
+@tab Yes
+@tab ISO 8601 UTC in saves metadata, logs, traces and reports
+@item §15
+@tab Yes
+@tab @code{--version}, README, @file{CREDITS.md}
+@item §17.5
+@tab Yes
+@tab This document; @file{PRD.md} is generated from it
+@item §19
+@tab Yes
+@tab Category D declared in README, @file{AGENTS.md}, @file{PROJECTS.md}
+@item §20–§23, §25
+@tab None owed
+@tab Category D
+@item §24
+@tab Audit
+@tab @code{cargo audit}, @code{cargo deny}; pinned stable and shader
+toolchains; SBOM per release (R-385)
+@item §26
+@tab Yes
+@tab @file{SECURITY.md} (R-302)
+@end multitable
+
+@node M0
+@chapter M0 — Foundation and shader feasibility
+
+@itemize @w{}
+@item [ ] R-301 Stable Rust workspace with @file{rust-toolchain.toml}, lockfile, @code{cargo deny} policy and CI building for Linux, Windows, macOS and @code{wasm32}
+@item [ ] R-302 Posture files, @file{AGENTS.md}, @file{CLAUDE.md}, @file{SECURITY.md}, @file{CREDITS.md} and REUSE coverage checked against the current Standard; @code{reuse lint} gates CI
+@item [ ] R-303 @file{.gitattributes} and @file{.editorconfig} per §6.5; CI rejects CR bytes
+@item [ ] R-304 GPL-2.0-or-later grant confirmed for every inherited file and recorded in @file{NOTICE.md}
+@item [ ] R-305 C oracle built reproducibly out of tree at a pinned commit, headless, with contraction disabled; test-only
+@item [ ] R-306 Codename and game class registered in the Standard §2.1 and §18.5 registries; Category D declared
+@item [ ] R-307 wgpu 30.0.1, naga, Rust GPU 0.11.0, @code{cargo-gpu} and the shader-only nightly pinned; ordinary builds never fetch nightly
+@item [ ] R-308 Shader gate: Rust vertex, fragment and compute shaders compile and pass naga and wgpu validation for every MVP backend
+@item [ ] R-309 Shader gate: lightmapped BSP slice with an indirect draw passes frozen sample and image checks on all five named targets
+@item [ ] R-310 Offline shader regeneration reproduces committed SPIR-V and WGSL byte for byte against a hash manifest
+@item [ ] R-311 Compatibility manifest: data editions, LibreQuake subset and licence audit, community corpus, limits table
+@item [ ] R-312 Fidelity contract: time-step corpus, exact-event list, per-field tolerances, trace format, and a demonstrated failing mismatch
+@item [ ] R-313 Reference machines, browsers, capture settings and approved performance targets recorded
+@end itemize
+
+@node M1
+@chapter M1 — Resources and QuakeC VM
+
+@itemize @w{}
+@item [ ] R-314 PAK, search paths and @code{-game} layering with read-only mounts and confined writes; traversal and symlink tests
+@item [ ] R-315 BSP29 loader: planes, nodes, leaves, clipnodes, hulls, faces, texinfo, lightmaps, visibility, entities
+@item [ ] R-316 MDL, SPR, WAD2, LMP, palette, colormap, conchars and WAV loaders
+@item [ ] R-317 Every loader returns typed errors with bounded allocation and never panics
+@item [ ] R-318 @file{progs.dat} v6 loader with CRC check; every opcode with checked operands
+@item [ ] R-319 Vanilla builtins with confined file access and an allowlist for content-issued commands
+@item [ ] R-320 Instruction budget (100 000 default) and a run error that never commits a partial call
+@item [ ] R-321 Fuzz targets for every loader and the VM with a minimised regression corpus
+@item [ ] R-322 @code{tharsis-tools} PAK, BSP and progs inspection with @code{--json}
+@end itemize
+
+@node M2
+@chapter M2 — Simulation and gameplay
+
+@itemize @w{}
+@item [ ] R-323 C-faithful float helpers: explicit promotion, no fused multiply-add, enforced by lint
+@item [ ] R-324 Edict arena with vanilla layout, free-list reuse and field-offset checks
+@item [ ] R-325 Hull tracing, point contents, area-node linking and vanilla touch order
+@item [ ] R-326 Movetypes, pushers, water, player movement and client think
+@item [ ] R-327 Spawning, level change, difficulty, secrets, intermission, episodes and endings
+@item [ ] R-328 Fixed 72 Hz server on its own thread, with catch-up cap and pause on suspend
+@item [ ] R-329 Protocol 15 loopback over bounded queues; reliable messages never dropped
+@item [ ] R-330 Headless scripted runner with seeds, time-step sequences and first-divergence trace diff
+@item [ ] R-331 Free-data corpus passes the M0 fidelity contract against the oracle
+@end itemize
+
+@node M3
+@chapter M3 — Client and reference renderer
+
+@itemize @w{}
+@item [ ] R-332 Client messages, interpolation, temporary entities, beams, particles, light styles and dynamic lights
+@item [ ] R-333 Command buffer, cvars, aliases, @code{exec}, @file{config.cfg}, @file{autoexec.cfg} and bindings
+@item [ ] R-334 Console, HUD, centre prints, keyboard-complete menus, intermission and finale screens
+@item [ ] R-335 No-data screen with a directory picker, in the @code{steelbore} theme
+@item [ ] R-336 Software renderer port: edges, spans, surface cache, sky, warp, models, sprites, particles, blends
+@item [ ] R-337 Headless software capture passes exact palette-index checks on frozen oracle scenes
+@item [ ] R-338 Tier 0 presentation through softbuffer, independent of wgpu
+@item [ ] R-339 Remappable keyboard and mouse, HUD scaling and reduced flash and motion options
+@item [ ] R-340 Gamepad input (optional)
+@end itemize
+
+@node M4
+@chapter M4 — Rust GPU renderer
+
+@itemize @w{}
+@item [ ] R-341 @code{tharsis-shade} shared functions with CPU unit tests, used by the software renderer
+@item [ ] R-342 GPU compute harness matches CPU shade results over boundary and random inputs
+@item [ ] R-343 Committed SPIR-V and WGSL regenerated and compared in CI; layout and alignment tests
+@item [ ] R-344 Capability probe, logged report, automatic tier choice and forced tier switches
+@item [ ] R-345 Tier 1: world and lightmap atlas uploaded once; models, sprites, particles, sky, liquids, view model, HUD
+@item [ ] R-346 Light styles and dynamic lights on the GPU with classic falloff; no CPU lightmap rebuilds
+@item [ ] R-347 Alias-model interpolation and instancing in the vertex shader
+@item [ ] R-348 Tier 2 compute culling into bounded indirect draws with preflight and same-frame fallback
+@item [ ] R-349 Tier 2 enabled automatically only for adapter classes that pass the adoption gate
+@item [ ] R-350 Classic and Enhanced presets; Classic passes frozen thresholds; traces unchanged
+@item [ ] R-351 Binding arrays where supported; material batching otherwise
+@item [ ] R-352 GPU timestamps where supported, CPU fallback metrics, shader warm-up, safe pipeline cache
+@item [ ] R-353 Device-loss recovery: one bounded rebuild, then Tier 0 or save-and-exit
+@item [ ] R-354 Uncapped rendering with interpolation, decoupled from the server tick
+@item [ ] R-355 Parallel command encoding, kept only if benchmarked faster (optional)
+@end itemize
+
+@node M5
+@chapter M5 — Audio, saves and demos
+
+@itemize @w{}
+@item [ ] R-356 Audio thread on a bounded lock-free queue; no I/O, locks or allocation in the callback
+@item [ ] R-357 Sound effects with vanilla channels, attenuation, ambient and static sounds, spatialisation
+@item [ ] R-358 Music from @file{music/} via symphonia, independent volumes, silent fallback
+@item [ ] R-359 Vanilla saves with atomic writes; corrupt saves refused and the previous one kept
+@item [ ] R-360 Protocol 15 demo playback and recording; timedemo with a versioned JSON report
+@item [ ] R-361 Built-in demos play on shareware and registered data
+@item [ ] R-362 Fuzz targets for demos, saves and config scripts
+@end itemize
+
+@node M6
+@chapter M6 — Community formats and limits
+
+@itemize @w{}
+@item [ ] R-363 BSP2 and 2PSB loaders with fuzz targets
+@item [ ] R-364 Protocol 666 for loopback and demos; protocol 999 only if the manifest requires it
+@item [ ] R-365 Raised limits from the M0 table, each bounded with a diagnostic
+@item [ ] R-366 Fog, skyboxes, entity alpha and @file{.lit} lighting in both presets and Tier 0
+@item [ ] R-367 Corpus releases completed locally with recorded evidence and known deviations
+@item [ ] R-368 Corpus performance measured on the reference machines against approved targets
+@end itemize
+
+@node M7
+@chapter M7 — Windows, macOS and browser
+
+@itemize @w{}
+@item [ ] R-369 Windows build on DX12 passes golden scenes and input, audio and filesystem tests
+@item [ ] R-370 macOS build on Metal passes golden scenes and input, audio and filesystem tests
+@item [ ] R-371 Browser build with the server in a Web Worker and no @code{SharedArrayBuffer} requirement
+@item [ ] R-372 Browser data picked by the player and kept only in local browser storage; no network fetch
+@item [ ] R-373 Browser saves, configs and demos in local storage with export and import
+@item [ ] R-374 Browser Tier 1 and Tier 2 pass golden scenes in the pinned browsers
+@item [ ] R-375 Browser audio through WebAudio and input with pointer lock
+@item [ ] R-376 Browser bundle size and start-up measured against approved targets
+@item [ ] R-377 Per-platform data paths implemented and documented
+@end itemize
+
+@node M8
+@chapter M8 — Validation and v0.1 release
+
+@itemize @w{}
+@item [ ] R-378 Every MVP map completed on all four platforms (registered and corpus data locally)
+@item [ ] R-379 Fidelity, visual, shader, fuzz, save and demo suites pass in the release configuration
+@item [ ] R-380 Performance results against approved targets; each miss resolved or approved
+@item [ ] R-381 Texinfo user manual @file{doc/tharsis.texi} building to Info, HTML and PDF
+@item [ ] R-382 Guix, Nix and Arch packages on stable Rust with @code{install-info}; clean installs verified
+@item [ ] R-383 Windows and macOS archives and browser bundle with checksums and source offer
+@item [ ] R-384 @code{--help} and @code{--version} per @code{spacecraft-cli-standard} with §15 attribution
+@item [ ] R-385 SBOM, @code{cargo audit}, @code{cargo deny}, release flags noted and benchmarked
+@item [ ] R-386 Signed release tag with notes listing known anomalies and the conformance claim
+@end itemize
+
+@node M9
+@chapter M9 — Mission packs and re-release
+
+@itemize @w{}
+@item [ ] R-387 @emph{Scourge of Armagon} engine behaviour, HUD and endings
+@item [ ] R-388 @emph{Dissolution of Eternity} engine behaviour, HUD and endings
+@item [ ] R-389 2021 re-release data and its QuakeC extensions (optional)
+@item [ ] R-390 External replacement textures (optional)
+@end itemize
+
+@node M10
+@chapter M10 — GPU experiments: optional only
+
+Every item here is optional, so this milestone has no required work and
+reports 100 percent for that reason alone. Each experiment is capability-gated,
+off by default, and must be removable without affecting saves, simulation or
+Tier 1.
+
+@itemize @w{}
+@item [ ] R-391 Mesh-shader world rendering benchmarked against Tier 2 (optional)
+@item [ ] R-392 Ray-query shadows and ambient occlusion with acceleration-structure budgets (optional)
+@item [ ] R-393 Path-traced lighting with denoising and history reset on cuts (optional)
+@item [ ] R-394 HDR display output with an SDR fallback and a luminance policy (optional)
+@item [ ] R-395 CubeCL for load-time compute, kept only if measured faster (optional)
+@end itemize
+
+@node M11
+@chapter M11 — Network play
+
+@itemize @w{}
+@item [ ] R-396 Licence (AGPL), assurance category and threat model reviewed before any listener
+@item [ ] R-397 NetQuake UDP client and server interoperating on protocols 15 and 666
+@item [ ] R-398 Cooperative and deathmatch tested under latency, loss and malformed packets
+@item [ ] R-399 Confined headless server with rate limits; legacy protocol documented as unauthenticated
+@item [ ] R-400 Browser multiplayer transport (optional)
+@end itemize
+
+@node Risks
+@chapter Risks
+
+@multitable @columnfractions .3 .1 .1 .5
+@headitem Risk @tab Impact @tab Likelihood @tab Mitigation
+@item Rust GPU lacks a needed feature or backend translation
+@tab High
+@tab Medium
+@tab M0 gate on every platform; committed artifacts; written WGSL fallback
+decision
+@item SPIR-V to WGSL translation fails for the browser
+@tab High
+@tab Medium
+@tab Browser is a named gate target in R-309; Tier 1 shaders kept simple
+@item Fidelity drift through floats, order or timing
+@tab High
+@tab High
+@tab Transliteration keeps expression shape; no-FMA lint; command-driven oracle
+from M0; first-divergence diff
+@item Four platforms in the MVP multiply testing
+@tab High
+@tab High
+@tab CI builds every target from M0; one reference machine per platform;
+platform work concentrated in M7
+@item Browser storage or WebGPU behaviour differs between browsers
+@tab Medium
+@tab High
+@tab Pinned browser versions; Tier 0 canvas fallback; export and import of
+saves
+@item Community corpus needs extensions beyond QuakeSpasm level
+@tab Medium
+@tab Medium
+@tab Manifest records each need in M0; anything beyond NG-2 is a scope
+decision
+@item GPU-driven path slower on small maps or integrated GPUs
+@tab Medium
+@tab Medium
+@tab Tier 1 default unless the adoption gate passes
+@item Malicious mods attack the VM or filesystem
+@tab High
+@tab Medium
+@tab Checked operands, budget, confinement, allowlist, fuzzing
+@item Registered and corpus data cannot enter public CI
+@tab Medium
+@tab Certain
+@tab Fixtures and LibreQuake in CI; scripted local acceptance gate
+@item Experimental wgpu APIs change
+@tab Low
+@tab High
+@tab Confined to M10, off by default, wgpu pinned
+@item Trademark complaint
+@tab Medium
+@tab Low
+@tab Codename, no assets, no logos, disclaimer
+@end multitable
+
+@node Open questions
+@chapter Open questions
+
+@multitable @columnfractions .12 .48 .4
+@headitem ID @tab Question @tab Recommendation
+@item OQ-301
+@tab Which machines and browsers are the references? Resolve in M0 (R-313).
+@tab An integrated Linux laptop, the maintainer's discrete workstation, one
+Windows and one Apple-silicon machine, current Chromium and Firefox
+@item OQ-302
+@tab Which LibreQuake release and subset, and may shareware data enter public
+CI? Resolve in M0 (R-311).
+@tab Prefer project fixtures plus audited LibreQuake; shareware only if its
+terms clearly allow CI use
+@item OQ-303
+@tab Does the corpus need protocol 999? Resolve in M0.
+@tab Add it only if a corpus map needs it
+@item OQ-304
+@tab Should Windows and macOS releases be code-signed or notarised? Resolve
+before M8.
+@tab Ship unsigned with checksums for v0.1; revisit if friction is high
+@item OQ-305
+@tab May code be adapted from QuakeSpasm (GPL-2.0-or-later)? Resolve per file.
+@tab Yes, after notice review and with file-level credit
+@item OQ-306
+@tab Should a hosted web page come later? Not before v0.1 (NG-4).
+@tab Revisit after release; it would need a §15.1 subdomain
+@end multitable
+
+@node Sources
+@chapter Sources
+
+@section Drafts merged
+
+All are archived unchanged in @file{docs/drafts/}.
+
+@itemize
+@item
+@file{PRD-v1.0.md}, the former @file{PRD.md} (Claude): crate layout, Rust
+GPU with committed shader artifacts, GPU light styles, fixed 72 Hz tick. Its
+R-001 to R-118 identifiers are retired.
+@item
+@file{PRD-Rust-GPU.texi}, version 1.2-draft: capability tiers, the M0 shader
+gate, the event-and-tolerance fidelity contract, the Tier 2 adoption gate,
+indirect-buffer overflow rules, performance method.
+@item
+@file{PRD-rust-gpu.texi}, version 0.1.0: product scope and user stories,
+threat model, presets, SDR and HDR policy, soak target, rejected defaults.
+@item
+@file{ProductRequirementsDocumentQuakeRS_CodenameSl.html} (Slipgate): browser
+play, community formats, GPU light and particle ideas, a ray-tracing vision.
+Its statement that Rust GPU was archived refers to the old Embark repository;
+the Rust-GPU project released @code{spirv-std} 0.11.0 on 2026-10-13.
+@item
+@file{quake-by-qwen.md}: personas, multiplayer and speedrun requirements, bug
+compatibility toggles, feature policy for advanced GPU work.
+@end itemize
+
+@section Research
+
+@itemize
+@item
+id Software, @url{https://github.com/id-Software/Quake, Quake GPL source
+release}; its @file{readme.txt} separates GPL code from game data.
+@item
+@url{https://wgpu.rs/, wgpu} 30.0.1, released 2026-08-22, and its
+@url{https://docs.rs/wgpu/30.0.1/wgpu/struct.Features.html, feature list}.
+@item
+@url{https://github.com/Rust-GPU/rust-gpu, Rust GPU} and @code{cargo-gpu};
+@code{spirv-std} 0.11.0, released 2026-10-13.
+@item
+@url{https://github.com/tracel-ai/cubecl, CubeCL} 0.11.3, released 2026-10-22.
+@item
+@url{https://github.com/lavenderdotpet/LibreQuake, LibreQuake}.
+@item
+QuakeSpasm, vkQuake and Ironwail as references for limits, protocol 666 and
+GPU-driven rendering.
+@item
+Prior Rust art: @url{https://github.com/cormac-obrien/richter, Richter},
+@url{https://github.com/eira-fransham/seismon, Seismon}, and Quake-SRP
+(@url{https://runtimewire.com/article/quake-srp-rust-port-claude-browser,
+write-up}).
+@item
+@emph{Phobos — PRD} (@file{doom-rs/PRD.md}), the sibling id Tech port.
+@item
+The Steelbore Standard v2.14, §2, §3, §4, §9, §17.5, §18.5, §19 and §24.
+@end itemize
+
+@bye
