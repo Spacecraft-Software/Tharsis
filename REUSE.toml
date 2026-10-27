@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Mohamed Hammad <Mohamed.Hammad@SpacecraftSoftware.org>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+version = 1
+
+# Archived PRD drafts written for the maintainer by several models. Files that
+# carry their own SPDX header keep it; this covers the ones that cannot.
+[[annotations]]
+path = "docs/drafts/**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Mohamed Hammad <Mohamed.Hammad@SpacecraftSoftware.org>"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
